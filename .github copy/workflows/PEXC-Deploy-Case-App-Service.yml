@@ -1,0 +1,341 @@
+name: PEXC-Deploy-Case-App-Service
+run-name: Deployed -> ${{ github.event.client_payload.TriggeredByChanges }} ${{ inputs.Artifact }}, Starting Env. -> '${{ inputs.pexcEnv }}' (empty -> POC), from ${{ github.event.client_payload.TriggeredFromBranch }}
+
+on:
+  repository_dispatch:
+    types: [ Deploy-Case ] 
+  workflow_dispatch:
+    inputs:
+      pexcEnv:
+        description: 'Select Environment'
+        required: true
+        default: 'POC'
+        type: choice
+        options:
+          - DEV
+          - UAT
+          - POC
+          - PROD
+      Artifact:
+        description: 'Provide Case Artifact to deploy'
+        required: true  
+        type: string  
+
+
+jobs:
+  Deploy-Case-App-to-POC:
+    if:  ${{ ( always() && inputs.pexcEnv == 'POC' ) || ( github.event.client_payload.ArtifactName != '' && github.event.client_payload.TriggeredFromBranch != 'release') }}
+    runs-on: windows-latest
+    environment: 
+      name : POC
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          repository:  Bain/tsg-peg-pexc-infrastructure
+          ref: develop
+          token: ${{ secrets.CUSTOM_ACTION_PAT }}
+          path: ./.github/actions/tsg-peg-pexc-infrastructure
+
+      - uses: actions/checkout@v3
+        with:
+          repository: azure/webapps-deploy
+          ref: v2.2.5
+          path: ./.github/actions/webapps-deploy
+
+      - uses: actions/checkout@v3
+        with:
+          repository: azure/functions-action
+          ref: v1.4.8
+          path: ./.github/actions/functions-action
+
+      - name: Extract Artifact Name
+        id: ean
+        shell: powershell
+        run: |
+            $artifact = if ("${{ inputs.Artifact }}" -eq "")  { "${{ github.event.client_payload.ArtifactName }}" } else { "${{ inputs.Artifact }}" }
+            "ARTIFACTNAME=$artifact" >> $env:GITHUB_ENV
+
+      - name: Download Case Build Artifact (${{ env.ARTIFACTNAME }}) for POC
+        id: cda
+        uses: ./.github/actions/tsg-peg-pexc-infrastructure/.github/actions/custom-download-artifact
+        with:
+          user: ${{ secrets.RK_TRIGGER_TESTS_USER }}
+          userpat: ${{ secrets.RK_TRIGGER_TESTS}}
+          ServiceName: case
+          ArtifactName: ${{ env.ARTIFACTNAME }}
+
+      - name: Deploy Azure WebApp to POC
+        uses: ./.github/actions/webapps-deploy
+        with:
+          app-name: ${{ vars.AZURE_WEBAPP_NAME }}
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          package: ".\\PEXC.CASE.Build-${{ env.PEXCZIPNAME }}\\PEXC.CASE.Build-${{ env.PEXCZIPNAME }}.zip"
+
+      - name: Deploy Azure Functions to POC
+        uses: ./.github/actions/functions-action
+        with:
+          app-name: ${{ vars.AZURE_FUNC_NAME }}
+          package: ".\\PEXC.CASE.Function.Build-${{ env.PEXCZIPNAME }}\\PEXC.CASE.Function.Build-${{ env.PEXCZIPNAME }}.zip"
+          publish-profile: ${{ secrets.AZURE_FUNC_PUBLISH_PROFILE }}  
+
+  Deployment-Summary:
+    runs-on:  windows-latest
+    if: ${{ always() }}
+
+    steps:
+      - name: Deployed 
+        if: ${{ github.event.client_payload.TriggeredByChanges != '' }}
+        run: |
+              "Deployed -> ${{ github.event.client_payload.TriggeredByChanges }} " >> $env:GITHUB_STEP_SUMMARY
+              "Branch -> ${{ github.event.client_payload.TriggeredFromBranch }}" >> $env:GITHUB_STEP_SUMMARY
+              "Link to build : [Build](https://github.com/Bain/tsg-peg-pexc-case/actions/runs/${{ github.event.client_payload.RunID }})" >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Deployed 
+        if: ${{ inputs.Artifact != '' }}
+        run: |
+              $ArtifactURL = "https://api.github.com/repos/Bain/tsg-peg-pexc-case/actions/artifacts?name=${{ inputs.Artifact }}"
+              $loginData = [System.Text.Encoding]::UTF8.GetBytes("${{ secrets.RK_TRIGGER_TESTS_USER }}:${{ secrets.RK_TRIGGER_TESTS }}")
+              $encryptedLoginData = [System.Convert]::ToBase64String($loginData)
+              $BainHeaderRequest = @{
+                  "Accept" = "application/vnd.github.everest-preview+json"
+                  "Content-Type" = "application/json"
+                  "Authorization" = "Basic $encryptedLoginData"
+              }
+
+              $SelectedArtifact = Invoke-WebRequest -Uri "$ArtifactURL" -Method 'GET' -Headers $BainHeaderRequest -UseBasicParsing 
+              $ArtifactURLContent = $SelectedArtifact.Content | ConvertFrom-Json
+              $wid = $ArtifactURLContent.artifacts[0].workflow_run.id
+
+              "Deployed -> ${{ inputs.Artifact }} " >> $env:GITHUB_STEP_SUMMARY 
+              "Link to build : [Build](https://github.com/Bain/tsg-peg-pexc-case/actions/runs/$wid)" >> $env:GITHUB_STEP_SUMMARY 
+
+  Deploy-Case-App-to-DEV:
+    if: ${{ ((always() && inputs.pexcEnv != 'UAT' && inputs.pexcEnv != 'PROD')  || inputs.pexcEnv == 'DEV' ) && github.event.client_payload.TriggeredFromBranch != 'release' }}
+    runs-on:  [self-hosted, zteupexcghadev, TSG-PEXC]
+    environment: 'DEV'
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          repository:  Bain/tsg-peg-pexc-infrastructure
+          ref: develop
+          token: ${{ secrets.CUSTOM_ACTION_PAT }}    
+          path: ./.github/actions/tsg-peg-pexc-infrastructure
+
+      - uses: actions/checkout@v3
+        with:
+          repository: azure/webapps-deploy
+          ref: v2.2.5
+          path: ./.github/actions/webapps-deploy
+
+      - uses: actions/checkout@v3
+        with:
+          repository: azure/functions-action
+          ref: v1.4.8
+          path: ./.github/actions/functions-action
+
+      - name: Extract Artifact Name
+        id: ean
+        shell: powershell
+        run: |
+            $artifact = if ("${{ inputs.Artifact }}" -eq "")  { "${{ github.event.client_payload.ArtifactName }}" } else { "${{ inputs.Artifact }}" }
+            "ARTIFACTNAME=$artifact" >> $env:GITHUB_ENV
+
+      - name: Download Case Build Artifact (${{ env.ARTIFACTNAME }}) for DEV
+        id: cda
+        uses: ./.github/actions/tsg-peg-pexc-infrastructure/.github/actions/custom-download-artifact
+        with:
+          user: ${{ secrets.RK_TRIGGER_TESTS_USER }}
+          userpat: ${{ secrets.RK_TRIGGER_TESTS}}
+          ServiceName: case
+          ArtifactName: ${{ env.ARTIFACTNAME }}
+
+      - name: Deploy Azure WebApp to DEV
+        uses: ./.github/actions/webapps-deploy
+        with:
+          app-name: ${{ vars.AZURE_WEBAPP_NAME }}
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          package: ".\\PEXC.CASE.Build-${{ env.PEXCZIPNAME }}\\PEXC.CASE.Build-${{ env.PEXCZIPNAME }}.zip"
+
+      - name: Deploy Azure Functions to DEV
+        uses: ./.github/actions/functions-action
+        with:
+          app-name: ${{ vars.AZURE_FUNC_NAME }}
+          package: ".\\PEXC.CASE.Function.Build-${{ env.PEXCZIPNAME }}\\PEXC.CASE.Function.Build-${{ env.PEXCZIPNAME }}.zip"
+          publish-profile: ${{ secrets.AZURE_FUNC_PUBLISH_PROFILE }}  
+
+  Deploy-Case-App-to-UAT:
+    if: ${{ ( always() && inputs.pexcEnv != 'PROD' ) || inputs.pexcEnv == 'UAT' }}  
+    runs-on:  [self-hosted, zteupexcghauat, TSG-PEXC]
+    environment: 'UAT'
+
+    steps:      
+      - uses: actions/checkout@v3
+        with:
+          repository:  Bain/tsg-peg-pexc-infrastructure
+          ref: develop        
+          token: ${{ secrets.CUSTOM_ACTION_PAT }}    
+          path: ./.github/actions/tsg-peg-pexc-infrastructure 
+
+      - uses: actions/checkout@v3
+        with:
+          repository: azure/webapps-deploy
+          ref: v2.2.5
+          path: ./.github/actions/webapps-deploy
+
+      - uses: actions/checkout@v3
+        with:
+          repository: azure/functions-action
+          ref: v1.4.8
+          path: ./.github/actions/functions-action
+
+      - name: Extract Artifact Name
+        id: ean
+        shell: powershell
+        run: |
+            $artifact = if ("${{ inputs.Artifact }}" -eq "")  { "${{ github.event.client_payload.ArtifactName }}" } else { "${{ inputs.Artifact }}" }
+            "ARTIFACTNAME=$artifact" >> $env:GITHUB_ENV
+
+      - name: Download Case Build Artifact (${{ env.ARTIFACTNAME }}) for UAT
+        id: cda
+        uses: ./.github/actions/tsg-peg-pexc-infrastructure/.github/actions/custom-download-artifact
+        with:
+          user: ${{ secrets.RK_TRIGGER_TESTS_USER }}
+          userpat: ${{ secrets.RK_TRIGGER_TESTS}}
+          ServiceName: case
+          ArtifactName: ${{ env.ARTIFACTNAME }}
+
+      - name: Deploy Azure WebApp to UAT
+        uses: ./.github/actions/webapps-deploy
+        with:
+          app-name: ${{ vars.AZURE_WEBAPP_NAME }}
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          package: ".\\PEXC.CASE.Build-${{ env.PEXCZIPNAME }}\\PEXC.CASE.Build-${{ env.PEXCZIPNAME }}.zip"
+
+      - name: Deploy Azure Functions to UAT
+        uses: ./.github/actions/functions-action
+        with:
+          app-name: ${{ vars.AZURE_FUNC_NAME }}
+          package: ".\\PEXC.CASE.Function.Build-${{ env.PEXCZIPNAME }}\\PEXC.CASE.Function.Build-${{ env.PEXCZIPNAME }}.zip"
+          publish-profile: ${{ secrets.AZURE_FUNC_PUBLISH_PROFILE }}  
+
+  Deploy-Case-App-to-PROD:
+    if: ${{ (always()  || inputs.pexcEnv == 'PROD' )}}  
+    runs-on:  [self-hosted, zteupexcghaprod, TSG-PEXC]
+    environment: 'PROD'
+
+
+    steps:
+      - name: Get Commit Id
+        run: |
+            $loginData = [System.Text.Encoding]::UTF8.GetBytes("${{ secrets.RK_TRIGGER_TESTS_USER }}:${{ secrets.RK_TRIGGER_TESTS }}")
+            $encryptedLoginData = [System.Convert]::ToBase64String($loginData)
+            $BainHeaderRequest = @{
+                "Accept" = "application/vnd.github.everest-preview+json"
+                "Content-Type" = "application/json"
+                "Authorization" = "Basic $encryptedLoginData"
+            }
+            $runId = ""
+            if ("${{ github.event.client_payload.TriggeredByChanges }}" -eq "") {
+              $ArtifactURL = "https://api.github.com/repos/Bain/tsg-peg-pexc-case/actions/artifacts?name=${{ inputs.Artifact }}"
+              $SelectedArtifact = Invoke-WebRequest -Uri "$ArtifactURL" -Method 'GET' -Headers $BainHeaderRequest -UseBasicParsing 
+              $ArtifactURLContent = $SelectedArtifact.Content | ConvertFrom-Json
+              $runId = $ArtifactURLContent.artifacts[0].workflow_run.id
+            } else {
+              $runId="${{ github.event.client_payload.RunID }}"
+            }
+            $RunUrl = "https://api.github.com/repos/Bain/tsg-peg-pexc-case/actions/runs/$runId"
+            $RunDataJson = Invoke-WebRequest -Uri $RunUrl -Method 'GET' -Headers $BainHeaderRequest -UseBasicParsing 
+            $RunData = $RunDataJson.Content | ConvertFrom-Json
+            $Sha = $RunData.head_sha
+            "HeadSha=$Sha" >> $env:GITHUB_ENV
+      
+      - name: Clone Main repo
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ env.HeadSha }}
+          token: ${{ secrets.CUSTOM_ACTION_PAT }}
+
+      - uses: actions/checkout@v3
+        with:
+          repository: Bain/tsg-peg-pexc-infrastructure
+          ref: develop        
+          token: ${{ secrets.CUSTOM_ACTION_PAT }}    
+          path: ./.github/actions/tsg-peg-pexc-infrastructure 
+
+      - uses: actions/checkout@v3
+        with:
+          repository: azure/webapps-deploy
+          ref: v2.2.5
+          path: ./.github/actions/webapps-deploy
+
+      - uses: actions/checkout@v3
+        with:
+          repository: azure/functions-action
+          ref: v1.4.8
+          path: ./.github/actions/functions-action
+
+      - name: Extract Artifact Name
+        id: ean
+        shell: powershell
+        run: |
+            $artifact = if ("${{ inputs.Artifact }}" -eq "")  { "${{ github.event.client_payload.ArtifactName }}" } else { "${{ inputs.Artifact }}" }
+            "ARTIFACTNAME=$artifact" >> $env:GITHUB_ENV
+
+      - name: Download Case Build Artifact (${{ env.ARTIFACTNAME }}) for PROD
+        id: cda
+        uses: ./.github/actions/tsg-peg-pexc-infrastructure/.github/actions/custom-download-artifact
+        with:
+          user: ${{ secrets.RK_TRIGGER_TESTS_USER }}
+          userpat: ${{ secrets.RK_TRIGGER_TESTS}}
+          ServiceName: case
+          ArtifactName: ${{ env.ARTIFACTNAME }}
+
+      - name: Deploy Azure WebApp to PROD
+        uses: ./.github/actions/webapps-deploy
+        with:
+          app-name: ${{ vars.AZURE_WEBAPP_NAME }}
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          package: ".\\PEXC.CASE.Build-${{ env.PEXCZIPNAME }}\\PEXC.CASE.Build-${{ env.PEXCZIPNAME }}.zip"
+
+      - name: Deploy Azure Functions to PROD
+        uses: ./.github/actions/functions-action
+        with:
+          app-name: ${{ vars.AZURE_FUNC_NAME }}
+          package: ".\\PEXC.CASE.Function.Build-${{ env.PEXCZIPNAME }}\\PEXC.CASE.Function.Build-${{ env.PEXCZIPNAME }}.zip"
+          publish-profile: ${{ secrets.AZURE_FUNC_PUBLISH_PROFILE }}
+
+      - name: Get tag name
+        run: |
+          ./.github/actions/tsg-peg-pexc-infrastructure/.github/scripts/Get-Release-Tag.ps1 "${{ secrets.JIRA_USER }}" "${{ secrets.JIRA_TOKEN }}"
+
+      - name: Tag current commit with version name
+        run: |
+          git tag ${{ env.TagName }}
+          git push origin ${{ env.TagName }}
+ 
+
+  Trigger-APIM-DEV-Update:    
+    needs: [ Deploy-Case-App-to-DEV ]
+    uses: ./.github/workflows/PEXC-Trigger-APIM-Update.yml
+    with:
+          pexcEnv: DEV
+          ServiceName: case
+    secrets: inherit          
+
+  Trigger-APIM-UAT-Update:    
+    needs: [ Deploy-Case-App-to-UAT ]
+    uses: ./.github/workflows/PEXC-Trigger-APIM-Update.yml
+    with:
+          pexcEnv: UAT
+          ServiceName: case
+    secrets: inherit   
+
+  Trigger-APIM-PROD-Update:    
+    needs: [ Deploy-Case-App-to-PROD ]
+    uses: ./.github/workflows/PEXC-Trigger-APIM-Update.yml
+    with:
+          pexcEnv: PROD
+          ServiceName: case
+    secrets: inherit   

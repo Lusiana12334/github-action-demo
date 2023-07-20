@@ -1,0 +1,35 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "dotnet",
+    "ServiceBusOptions:ConnectionString": "from-secrets",
+    "CosmosOptions:ConnectionString": "from-secrets",
+    "CosmosOptions:Database": "Casedb",
+    "CosmosOptions:Container": "Cases",
+    "CosmosOptions:LeasesContainer": "Leases",
+    "CosmosOptions:AuditContainer": "CaseAudit",
+    "CosmosChangeFeedOptions:CaseChangeTopicName": "case-change-topic-local",
+    "CosmosChangeFeedOptions:StartSurveySubscription": "case-change-startsurvey-subscription",
+    "CosmosChangeFeedOptions:EndSurveySubscription": "case-change-endsurvey-subscription",
+    "CosmosChangeFeedOptions:AuditSubscription": "case-change-audit-subscription",
+    "CosmosChangeFeedOptions:UserEditSubscription": "case-change-useredit-subscription",
+    "CosmosChangeFeedOptions:SurveyOpenedSubscription": "case-change-surveyopened-subscription",
+    "CosmosChangeFeedOptions:ScheduleSurveySubscription": "case-change-surveyschedule-subscription",
+    "WorkflowSurveyOptions:TriggerSurveyQueue": "case-trigger-survey-queue-local",
+    "CaseDataImportOptions:RefreshSchedule": "0 */20 * * * *",
+    "UpdateIrisCaseDataOptions:RefreshSchedule": "0 */20 * * * *",
+    "SearchableCasesCrawlerOptions:TriggerSchedule": "0 */20 * * * *",
+
+    "AzureActiveDirectoryOptions:Instance": "https://login.microsoftonline.com",
+    "AzureActiveDirectoryOptions:ClientId": "d6d0c94e-8e29-4b9e-be0a-a1eff03f1a3e",
+    "AzureActiveDirectoryOptions:TenantId": "f0488bf5-fdc1-419b-aecf-f8e9e04c82e7",
+    "AzureActiveDirectoryOptions:Scope": "Document.UserAccess",
+    "AzureActiveDirectoryOptions:ClientSecret": "from-secrets",
+    "DocumentServiceOptions:BaseUrl": "https://pexc-poc-document.azurewebsites.net",
+    "DocumentServiceOptions:Scope": "api://TSG-PEXC-dev-Document.bainlab.com/.default",
+    "ProfileApiOptions:BaseUrl": "https://pexc-poc-profile.azurewebsites.net/v1/api/",
+    "ProfileApiOptions:Scope": "api://TSG-PEXC-dev-Profile.bainlab.com/.default",
+    "ProfileApiOptions:CacheExpiration": "1:00:00"
+  }
+}

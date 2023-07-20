@@ -1,0 +1,44 @@
+name: codeql-analysis
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: ['develop','main']
+env:
+  SOLUTION_PATH: Case.sln
+  GIT_ARTIFACT_FEED: "https://nuget.pkg.github.com/Bain/index.json"
+jobs:
+  codeql-analysis:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:      
+        languages: [csharp]
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+    - name: Setup .Net Core SDK
+      uses: actions/setup-dotnet@v2.1.0
+      with:
+          dotnet-version: 6.0.*
+    - name: Setup Node
+      uses: actions/setup-node@v1
+    - name: Add Artifact repo
+      run: dotnet nuget add source --username ${{ github.actor }} --password ${{ secrets.NUGET_RESTORE_PAT }} --store-password-in-clear-text --name github ${{ env.GIT_ARTIFACT_FEED }}
+    - name: Restore dependencies
+      run: dotnet restore ${{ env.SOLUTION_PATH }}        
+      shell: pwsh
+    - name: Initialize CodeQL
+      uses: github/codeql-action/init@v2
+      with:
+        languages: ${{ matrix.languages }}
+    - name: Setup MSBuild.exe
+      uses: microsoft/setup-msbuild@v1.1
+    - name: Build projects
+      run: |
+        [array]$projects = '${{ env.DOTNET_PROJECTS }}'.Split(',').Trim()
+        foreach ($projectName in $projects) {
+          msbuild $projectName /p:UseSharedCompilation=false /p:Configuration=Release
+        }        
+      shell: pwsh
+    - name: Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v2

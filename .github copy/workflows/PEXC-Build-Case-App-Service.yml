@@ -1,0 +1,184 @@
+name: PEXC-Build-Case-App-Service
+run-name: Build-Case from ${{ github.event.commits[0].message }}, branch ${{ github.ref_name }} 
+
+on:
+  push:
+    branches:
+      - 'release'
+      - 'develop' 
+      - 'main'    
+  workflow_call:
+    outputs:
+       PEXCBuildName: 
+        description: "Case Build Name"
+        value: ${{ jobs.Build-Case-App-Service.outputs.BuildAppName }}     
+       PEXCFunctionBuildName: 
+        description: "Case Function Build Name"
+        value: ${{ jobs.Build-Case-App-Service.outputs.FunctionBuildAppName }}                              
+  workflow_dispatch:
+    inputs:
+      BuildFromBranch: 
+        description: "Build Case from specific branch"
+        type: string 
+ 
+env:
+  AZURE_WEBAPP_PACKAGE_PATH: D:\a\_temp\
+  SOLUTION_CONFIG: "Release"
+  GIT_ARTIFACT_FEED: "https://nuget.pkg.github.com/Bain/index.json"
+  SOLUTION_PATH: ${{ vars.SLN_NAME }}
+
+
+jobs:
+  Build-Case-App-Service:
+    runs-on: windows-latest
+    outputs:
+      BuildAppName: ${{ steps.UploadBuild.outputs.PEXCBuildName }}  
+      FunctionBuildAppName: ${{ steps.UploadBuildFunction.outputs.PEXCFunctionBuildName }}  
+
+    steps:       
+      - name: Select branch for build 
+        id: sbb
+        shell: powershell
+        run: |
+            $bb = if ("${{ inputs.BuildFromBranch }}" -eq "")  { "${{ github.ref_name }}" } else { "${{ inputs.BuildFromBranch }}" }
+            "CUSTOMBRANCH=$bb" >> $env:GITHUB_ENV
+            Write-Output "Branch used for build : $bb"
+
+      - name: Checkout Source Code
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ env.CUSTOMBRANCH }}
+
+      - name: Setup .Net Core SDK
+        uses: actions/setup-dotnet@v2.1.0
+        with:
+          dotnet-version: 6.0.*        
+
+      - name: Add Artifact repo
+        run: dotnet nuget add source --username ${{ github.actor }} --password ${{ secrets.NUGET_RESTORE_PAT }} --store-password-in-clear-text --name github ${{ env.GIT_ARTIFACT_FEED }}
+      
+      # use it if something wrong with nuget, however build takes much longer
+      #- name: clear nuget solution
+      #  run: dotnet nuget locals http-cache -c
+
+      - name: Clean solution
+        run: dotnet clean ${{ env.SOLUTION_PATH }} --configuration ${{ env.SOLUTION_CONFIG }}
+
+      - name: Cache .NET packages
+        uses: actions/cache@v3
+        with:
+          path: ~/.nuget/packages 
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Restore dependencies
+        run: dotnet restore ${{ env.SOLUTION_PATH }}  
+
+      - name: Build solution
+        shell: powershell
+        run:  dotnet build ${{ env.SOLUTION_PATH }} --configuration ${{ env.SOLUTION_CONFIG }} --no-restore           
+
+      - name: Run Unit Test
+        run: dotnet test  --% --configuration Release --no-restore /p:CollectCoverage=true /p:CoverletOutput="../CoverageResults/" /p:MergeWith="../CoverageResults/coverage.json" /p:CoverletOutputFormat=\"cobertura,json\" -m:1
+        
+      - name: Zip Name
+        id: BuildZipName
+        shell: powershell
+        run: |
+            $zip = "${{ github.ref_name }}-${{ github.run_number }}".Replace("/","_").Replace("]","").Replace("[","")
+            "PEXCZIPNAME=$zip" >> $env:GITHUB_ENV
+
+      - name: Build zip file
+        id: BuildZip
+        uses: DuckSoft/create-7z-action@v1.0
+        with: 
+         pathSource: .\Api\bin\Release\net6.0\*
+         pathTarget: ${{ env.AZURE_WEBAPP_PACKAGE_PATH }}PEXC.CASE.Build-${{ env.PEXCZIPNAME }}.zip
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v3.1.0
+        with:
+          name: PEXC.CASE.Build-${{ env.PEXCZIPNAME }}.zip
+          path: "${{ env.AZURE_WEBAPP_PACKAGE_PATH }}PEXC.CASE.Build-${{ env.PEXCZIPNAME }}.zip" 
+
+      - name: Result Build Name
+        id: UploadBuild
+        run: |
+          "PEXCBuildName=PEXC.CASE.Build-${{ env.PEXCZIPNAME }}" >> $env:GITHUB_OUTPUT
+
+      - name: Build function zip file
+        id: BuildZipfunction
+        uses: DuckSoft/create-7z-action@v1.0
+        with: 
+         pathSource: .\Functions\bin\Release\net6.0\*
+         pathTarget: ${{ env.AZURE_WEBAPP_PACKAGE_PATH }}PEXC.CASE.Function.Build-${{ env.PEXCZIPNAME }}.zip
+
+      - name: Upload Function Build Artifact
+        uses: actions/upload-artifact@v3.1.0
+        with:
+          name: PEXC.CASE.Function.Build-${{ env.PEXCZIPNAME }}.zip
+          path: "${{ env.AZURE_WEBAPP_PACKAGE_PATH }}PEXC.CASE.Function.Build-${{ env.PEXCZIPNAME }}.zip" 
+
+      - name: Result Function Build Name
+        id: UploadBuildFunction
+        run: |
+          "PEXCFunctionBuildName=PEXC.CASE.Function.Build-${{ env.PEXCZIPNAME }}" >> $env:GITHUB_OUTPUT   
+
+      - name: Upload Cobertura Artifact
+        uses: actions/upload-artifact@v3.1.0
+        with:
+          name: Cobertura.CASE
+          path: "${{ github.workspace }}\\CoverageResults\\"
+
+
+
+  Trigger-Deploy-Case-App:
+    needs: [ Build-Case-App-Service ]
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          repository:  Bain/tsg-peg-pexc-infrastructure
+          ref: develop         
+          token: ${{ secrets.CUSTOM_ACTION_PAT }}    
+          path: ./.github/actions/tsg-peg-pexc-infrastructure              
+
+      - name: Trigger Deploy Case
+        uses: ./.github/actions/tsg-peg-pexc-infrastructure/.github/actions/trigger-deploy
+        with:
+          user: ${{ secrets.RK_TRIGGER_TESTS_USER }}
+          userpat: ${{ secrets.RK_TRIGGER_TESTS}}
+          ArtifactName: ${{ needs.Build-Case-App-Service.outputs.BuildAppName }}
+          ServiceName: case                  
+          GithubRunId: ${{ github.run_id }}   
+          GithubRefName: ${{ github.ref_name }}  
+          
+
+  Coverage-Report:
+    needs: [ Build-Case-App-Service ]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download a Cobertura Artifact
+        uses: actions/download-artifact@v3.0.2
+        with:
+          name: Cobertura.CASE
+
+      - name: Code Coverage Report
+        uses: irongut/CodeCoverageSummary@v1.3.0
+        with:
+          filename: coverage.cobertura.xml
+          badge: true
+          fail_below_min: false
+          format: markdown
+          hide_branch_rate: false
+          hide_complexity: true
+          indicators: true
+          output: both
+          thresholds: '1'
+
+      - name: summary
+        run: |
+              cat code-coverage-results.md >> $GITHUB_STEP_SUMMARY		

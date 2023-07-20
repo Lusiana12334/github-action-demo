@@ -1,0 +1,44 @@
+name: PEXC-BuildCheck-Case-App-Service
+
+on:
+  pull_request:
+   branches:
+      - develop
+      - main 
+      - release 
+
+env:
+  SOLUTION_PATH: ${{ vars.SLN_NAME }}
+  SOLUTION_CONFIG: "Release"
+  SOLUTION_LOGGER: "trx;logfilename=Msvc-Case.trx"
+  GIT_ARTIFACT_FEED: "https://nuget.pkg.github.com/Bain/index.json"
+
+
+jobs:
+  BuildCheck-Case-App-Service:
+    runs-on: windows-latest
+
+    steps:        
+      - name: Setup .NET Core SDK
+        uses: actions/setup-dotnet@v2.1.0
+        with:
+              dotnet-version: 6.0.*
+
+      - name: Source Checkout
+        uses: actions/checkout@v3
+
+      - name: Add Artifact repo
+        run: dotnet nuget add source --username ${{ github.actor }} --password ${{ secrets.NUGET_RESTORE_PAT }} --store-password-in-clear-text --name github ${{ env.GIT_ARTIFACT_FEED }}
+
+      - name: Clean solution
+        run: dotnet clean ${{ env.SOLUTION_PATH }} --configuration ${{ env.SOLUTION_CONFIG }}
+
+      - name: Restore dependencies
+        run: dotnet restore ${{ env.SOLUTION_PATH }}
+
+      - name: Build solution
+        shell: powershell
+        run: dotnet build ${{ env.SOLUTION_PATH }} --configuration ${{ env.SOLUTION_CONFIG }} --no-restore 
+
+      - name: Run Unit Test
+        run: dotnet test --configuration  ${{ env.SOLUTION_CONFIG }} --logger "${{ env.SOLUTION_LOGGER }}" --no-restore              

@@ -1,0 +1,46 @@
+name: PEXC-Trigger-APIM-Update
+run-name: PEXC-Trigger-APIM-Update for ${{ inputs.ServiceName }}
+
+on:
+  workflow_call:
+    inputs:
+      pexcEnv:
+         type: string 
+         required: true 
+      ServiceName:
+         type: string 
+         required: false                    
+  workflow_dispatch:
+    inputs:
+      pexcEnv:
+        description: 'Select Environment'
+        required: true
+        default: 'DEV'
+        type: choice
+        options:
+          - DEV
+          - UAT
+          - PROD
+      ServiceName:
+       description: "Service Name to update on APIM"
+
+
+jobs:
+  Run-APIM-Update:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          repository:  Bain/tsg-peg-pexc-infrastructure
+          ref: develop         
+          token: ${{ secrets.CUSTOM_ACTION_PAT }}    
+          path: ./.github/actions/tsg-peg-pexc-infrastructure              
+
+      - name: Trigger APIM update for ${{ inputs.ServiceName }} on ${{ inputs.pexcEnv }}
+        uses: ./.github/actions/tsg-peg-pexc-infrastructure/.github/actions/trigger-apim-update
+        with:
+          user: ${{ secrets.RK_TRIGGER_TESTS_USER }}
+          userpat: ${{ secrets.RK_TRIGGER_TESTS}}
+          pexcEnv: ${{ inputs.pexcEnv }}
+          ServiceName: ${{ inputs.ServiceName }}

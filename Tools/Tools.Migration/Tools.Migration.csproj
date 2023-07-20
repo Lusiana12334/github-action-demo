@@ -1,0 +1,53 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+	<PropertyGroup>
+		<OutputType>Exe</OutputType>
+		<UserSecretsId>81155dc6-e6b5-4436-a9e2-b8bf12495dad</UserSecretsId>
+	</PropertyGroup>
+	<ItemGroup>
+		<None Remove="appsettings.json" />
+		<None Remove="appsettings.Poc.json" />
+		<None Remove="appsettings.Development.json" />
+		<None Remove="appsettings.Uat.json" />
+		<None Remove="appsettings.Production.json" />
+	</ItemGroup>
+	<ItemGroup>
+		<Content Include="appsettings.Poc.json">
+		  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		  <DependentUpon>appsettings.json</DependentUpon>
+		</Content>
+		<Content Include="appsettings.Development.json">
+		  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		  <DependentUpon>appsettings.json</DependentUpon>
+		</Content>
+		<Content Include="appsettings.Uat.json">
+		  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		  <DependentUpon>appsettings.json</DependentUpon>
+		</Content>
+		<Content Include="appsettings.Production.json">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+			<DependentUpon>appsettings.json</DependentUpon>
+		</Content>
+		<Content Include="appsettings.json">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</Content>
+	</ItemGroup>
+	<ItemGroup>
+		<PackageReference Include="AutoMapper" Version="11.0.1" />
+		<PackageReference Include="CsvHelper" Version="30.0.1" />
+		<PackageReference Include="Faker.Net" Version="2.0.154" />
+		<PackageReference Include="Microsoft.Data.SqlClient" Version="5.0.1" />
+		<PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" Version="6.0.1" />
+		<PackageReference Include="NLog.Extensions.Logging" Version="5.2.1" />
+		<PackageReference Include="PEXC.Common.BaseApi" Version="1.0.42" />
+		<PackageReference Include="PEXC.Common.Taxonomy" Version="1.0.3" />
+	</ItemGroup>
+	<ItemGroup>
+	  <ProjectReference Include="..\..\Domain\Domain.csproj" />
+	  <ProjectReference Include="..\..\Services\Services.csproj" />
+	</ItemGroup>
+	<ItemGroup>
+		<None Update="NLog.config">
+			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
+		</None>
+	</ItemGroup>
+</Project>
