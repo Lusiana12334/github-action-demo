@@ -1,0 +1,76 @@
+name: "Snyk source composition analysis" 
+description: "This action leverages Snyk Open Source to scan dependencies for known license issues and vulnerabilities."
+inputs:
+  snyk_api_key:
+    description: "Expects a string value corresponding to the API key to use when accessing the Snyk organization."
+    required: true
+  integrate_with_snyk_platform:
+    description: 'If this is true, the repository will be integrated with the Snyk platform.'
+    required: false
+    default: false
+  path_to_dependency_file: 
+    description: "Expects the relative GitHub path to the dependency file to test."
+    required: true
+  snyk_org_id:
+    description: "Expects a string value corresponding to the Snyk organization ID. It expects a GUID format."
+    required: true
+  snyk_integration_id:
+    description: "Expects a string value corresponding to the Integration ID for a source control provider. This can be found on the Integration page in the Settings area for all integrations that have been configured."
+    required: true
+  repository:
+    description: "Expects the GitHub repository to post a GitHub Issue to."
+    required: true
+  branch_name:
+    description: "Expects the GitHub repository branch name that should be imported into Snyk. This is required if 'integrate_with_snyk_platform' is 'true'."
+    required: false
+  upload_sarif:
+    description: 'If this is true, details of the Snyk scan will be uploaded as a SARIF file to the Security tab of a repository.'
+    required: false
+    default: false
+  create_github_issues:
+    description: 'If this is true, details of the Snyk scan will be posted to the Issues tab of a repository.'
+    required: false
+    default: false
+  github_issue_assignee:
+    description: "Expects a string value corresponding to the GitHub user to assign issues to if 'create_github_issues' is 'true'."
+    required: false
+  security_issues_labels:
+    description: "The labels that should be applied to security-related GitHub Issues if 'create_github_issues' is 'true'."
+    required: false
+  license_issues_labels:
+    description: "The labels that should be applied to license compliance-related GitHub Issues if 'create_github_issues' is 'true'."
+    required: false 
+  snyk_github_integration_token:
+    description: "GitHub token to use for posting issues. This is required if 'create_github_issues' is 'true'."
+    required: false
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout private tools
+      run: git clone --branch sarif https://${{ inputs.snyk_github_integration_token }}@github.com/Bain/tsg-sae-powershell-snyk-automation.git
+      shell: pwsh
+    - name: Ensure Snyk project is imported
+      run: |
+        $splat = @{
+          snykApiKey = '${{ inputs.snyk_api_key }}'
+          snykOrgId = '${{ inputs.snyk_org_id }}'
+          integrationId = '${{ inputs.snyk_integration_id }}'
+          repository = '${{ inputs.repository }}'
+          branchName = '${{ inputs.branch_name }}'
+          dotSourceFilePath = 'tsg-sae-powershell-snyk-automation\functions\functions.ps1'
+        }
+        tsg-sae-powershell-snyk-automation\scripts\Set-SnykProject.ps1 @splat
+      shell: pwsh   
+    - name: Checkout Private Action
+      uses: actions/checkout@v2
+      with:
+        repository: Bain/Snyk-Scan-Action
+        ref: main
+        token: ${{ env.BAIN_ISSUES_TOKEN }}
+        path: private-actions/snyk-scan-action.yml
+    - name: Run Snyk Analysis
+      uses: ./private-actions/snyk-scan-action.yml
+      with:
+        language: 'csharp' 
+        path_to_dependency_file: ${{ inputs.PATH_TO_DEPENDENCY_FILE }}
+        snyk_api_key: ${{ env.SNYK_TOKEN }}
