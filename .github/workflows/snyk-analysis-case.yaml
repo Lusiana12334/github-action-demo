@@ -1,0 +1,15 @@
+name: snyk-analysis-case
+on:
+  workflow_dispatch:
+  pull_request_target:
+    branches: ['develop','main']
+jobs:
+  synk-analysis:
+    uses: Bain/snyk-csharp/.github/workflows/snyk-analysis.yml@v4.0.1
+    secrets: 
+      AUTH_TOKEN: ${{ secrets.NUGET_RESTORE_PAT }}
+    with:
+      DEPARTMENT: tsgsandbox
+      REPOSITORY_BRANCH_TO_IMPORT_INTO_SNYK: develop
+      PATH_TO_DEPENDENCY_FILE: Case.sln
+      ARTIFACT_FEED: "https://nuget.pkg.github.com/Bain/index.json" #for PEG-PEXC-CASE

@@ -1,0 +1,235 @@
+name: snyk-analysis 
+on:
+  workflow_call:
+     secrets:
+      SNYK_DEPARTMENT:
+        description: 'This is another method to pass in the Snyk department value when integrating with the Snyk platform.'
+        required: false
+      AUTH_TOKEN:
+        description: 'Authentication token to access defined artifact'
+        required: false
+     inputs:
+      DEPARTMENT:
+        description: 'The department the repository belongs to (e.g., aag, bcn, globeng, ngss)'
+        required: false
+        type: string
+      SNYK_ORG_ID:
+        required: false
+        type: string
+      SNYK_INTEGRATION_ID:
+        required: false
+        type: string
+      PATH_TO_DEPENDENCY_FILE:
+        description: 'The path to the dependency file goes here (e.g., requirements.sln).'
+        required: true
+        type: string
+      REPOSITORY_BRANCH_TO_IMPORT_INTO_SNYK:
+        description: 'The branch of the repository that should be imported into Snyk for tracking of historical data (e.g., main).'
+        required: true
+        type: string 
+      INTEGRATE_WITH_SNYK_PLATFORM:
+        description: 'Specifies whether or not the repository should be imported into the Snyk platform.'
+        required: false
+        default: false
+        type: string
+      UPLOAD_SARIF:
+        description: 'Specifies whether SARIF results are created so that they can be uploaded in a later step to the Security tab.'
+        required: false
+        type: string
+        default: 'true'
+      CREATE_GITHUB_ISSUE:
+        description: 'Specifies whether a GitHub Issue will be created.'
+        required: false
+        default: 'false'
+        type: string 
+      GITHUB_ISSUE_ASSIGNEE:
+        description: 'The GitHub user that issues should be assigned to goes here (e.g., awshole). Do not include if no user should be assigned.'
+        default: ''
+        required: false
+        type: string 
+      SECURITY_ISSUES_LABELS:
+        description: 'The labels that should be applied to security-related GitHub Issues goes here (e.g., "security, snyk, dotnet")'
+        default: 'security, snyk, dotnet'
+        required: false
+        type: string
+      LICENSE_ISSUES_LABELS:
+        description: 'The labels that should be applied to license-related GitHub Issues goes here (e.g., "license-compliance")'
+        default: 'license-compliance'
+        required: false
+        type: string
+      ARTIFACT_FEED:
+        description: "Artifact feed from Repo to build solution"
+        required: false
+        type: string
+      
+permissions:
+  id-token: write
+  contents: read
+  actions: read
+  security-events: write
+  statuses: write
+env:
+  AWS_REGION: "us-east-1"
+  AWS_ARN: "arn:aws:iam::379084356790:role/Service-VaultSecurityGroup-GithubActions-OIDC"
+  VAULT_SG: "sg-0a23d8a4f1676db07"
+  VAULT_ADDR: "https://aws-amer.vault.tools.bain.com"
+  VAULT_ROLE: github-oidc-appsec
+  VAULT_PATH: kv/appsec
+  VAULT_NAMESPACE: tsg/security
+  ARTIFACT_FEED: ${{ inputs.ARTIFACT_FEED }}
+
+jobs:
+  dotnet:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:      
+        languages: [csharp]
+    steps:
+      - name: Get Public IP
+        id: ip
+        run: |
+          IP=$(curl https://checkip.amazonaws.com/)
+          echo "ip=${IP}" >> $GITHUB_OUTPUT
+        shell: bash
+      - name: Configure AWS
+        run: |
+          export AWS_ROLE_ARN=${{ env.AWS_ARN }}
+          export AWS_WEB_IDENTITY_TOKEN_FILE=/tmp/awscreds
+          export AWS_DEFAULT_REGION=${{ env.AWS_REGION }}
+          echo AWS_WEB_IDENTITY_TOKEN_FILE=$AWS_WEB_IDENTITY_TOKEN_FILE >> $GITHUB_ENV
+          echo AWS_ROLE_ARN=$AWS_ROLE_ARN >> $GITHUB_ENV
+          echo AWS_DEFAULT_REGION=$AWS_DEFAULT_REGION >> $GITHUB_ENV
+          curl -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL"
+          curl -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL" | jq -r '.value' > $AWS_WEB_IDENTITY_TOKEN_FILE
+        shell: bash
+      - name: Add public IP
+        id: addip
+        run: |
+          aws ec2 authorize-security-group-ingress --group-id "${{ env.VAULT_SG }}" --protocol tcp --port 443 --cidr "${{ steps.ip.outputs.ip }}/32"
+          echo "If this process errored out due to full Security Groups, please contact infrasupport@bain.com for remediation, providing the following error: While executing the Snyk Scan, An error occurred (RulesPerSecurityGroupLimitExceeded) when calling the AuthorizeSecurityGroupIngress operation: The maximum number of rules per security group has been reached."
+        continue-on-error: false
+        shell: bash
+      - name: Import Secrets
+        uses: hashicorp/vault-action@v2.5.0
+        id: secrets
+        with:
+          url: ${{ env.VAULT_ADDR }}
+          namespace: ${{ env.VAULT_NAMESPACE }}
+          method: jwt
+          path: gha
+          jwtGithubAudience: sigstore
+          role: ${{env.VAULT_ROLE}}
+          secrets: |
+            kv/data/appsec snyk_token ;
+            kv/data/appsec bain_issues_token 
+        if: steps.addip.outcome == 'success'
+        continue-on-error: false       
+      - name: Checkout working repository
+        uses: actions/checkout@v2
+      - name: Add Artifact repo
+        run: dotnet nuget add source --username ${{ github.actor }} --password ${{ secrets.AUTH_TOKEN }} --store-password-in-clear-text --name github ${{ inputs.ARTIFACT_FEED }}
+      - name: NuGet Setup 
+        uses: nuget/setup-nuget@v1
+      - name: Remove NuGet.Config from source repo
+        run: rm -force back-end/Backend/nuget.config
+        continue-on-error: true
+      - name: Restore VS Dependencies
+        if: ('${{ inputs.ARTIFACT_FEED }}' -like "*.visualstudio.*")
+        run: |
+          {
+              Get-ChildItem -Filter "*.sln" -Recurse | ForEach-Object {nuget restore $_.FullName -ConfigFile ${{ github.workspace }}/build/nuget.config}
+              }
+        shell: pwsh
+      - name: Restore Internal Dependencies
+        run: dotnet restore ${{ inputs.PATH_TO_DEPENDENCY_FILE }}
+        shell: pwsh
+      - name: Checkout private GitHub Actions repository
+        uses: actions/checkout@v3
+        with:
+          repository: Bain/snyk-csharp
+          ref: main
+          token: ${{ env.BAIN_ISSUES_TOKEN }}
+          path: private-actions/snyk-csharp
+      - name: Determine Snyk Organization and Integration IDs
+        env:
+          SNYK_DEPARTMENT: ${{ secrets.SNYK_DEPARTMENT }}
+        run: |
+          if ('${{ inputs.DEPARTMENT }}' -like 'aag' -or '${{ env.SNYK_DEPARTMENT }}' -like 'aag') {
+            'SNYK_ORG_ID=475bfd45-927e-4d5f-9036-82202579c57e' >> ${{ github.env }}
+            'SNYK_INTEGRATION_ID=0400d111-bf2f-43c6-b8e9-3bc1a2042549' >> ${{ github.env }}
+            Write-Host "Snyk department is AAG."
+          } elseif ('${{ inputs.DEPARTMENT }}' -like 'bcn' -or '${{ env.SNYK_DEPARTMENT }}' -like 'bcn') {
+            'SNYK_ORG_ID=e51ef8d1-4bf7-4cb1-8385-147d373ca78e' >> ${{ github.env }}
+            'SNYK_INTEGRATION_ID=7f11d5ad-c56a-4078-8126-f76447c72027' >> ${{ github.env }}
+            Write-Host "Snyk department is BCN."
+          } elseif ('${{ inputs.DEPARTMENT }}' -like 'ngss' -or '${{ env.SNYK_DEPARTMENT }}' -like 'ngss') {
+            'SNYK_ORG_ID=8fcaf416-7e8d-4efe-a193-98ea0cc649c1' >> ${{ github.env }}
+            'SNYK_INTEGRATION_ID=4b240329-b5cf-4bcf-859a-2c957ffed7b8' >> ${{ github.env }}
+            Write-Host "Snyk department is NGSS."
+          } elseif ('${{ inputs.DEPARTMENT }}' -like 'external-cdp' -or '${{ env.SNYK_DEPARTMENT }}' -like 'external-cdp') {
+            'SNYK_ORG_ID=686b5154-5f1e-42cf-8184-a3579bf49101' >> ${{ github.env }}
+            'SNYK_INTEGRATION_ID=06d2e548-3b2c-4d41-a271-35399923aaed' >> ${{ github.env }}
+            Write-Host "Snyk department is [External] CDP."
+          } elseif ('${{ inputs.DEPARTMENT }}' -like 'external-helix' -or '${{ env.SNYK_DEPARTMENT }}' -like 'external-helix') {
+            'SNYK_ORG_ID=f61610da-f625-4987-936b-4b24fbeebefe' >> ${{ github.env }}
+            'SNYK_INTEGRATION_ID=ab9b5501-04f2-428b-855e-f97b4e235aec' >> ${{ github.env }}
+            Write-Host "Snyk department is [External] Helix."
+          } elseif ('${{ inputs.DEPARTMENT }}' -like 'tandoor' -or '${{ env.SNYK_DEPARTMENT }}' -like 'tandoor') {
+            'SNYK_ORG_ID=ed95f611-4b25-4765-a798-0b6077ffc148' >> ${{ github.env }}
+            'SNYK_INTEGRATION_ID=296da5b8-630f-40ed-b89c-dc85b0e2a656' >> ${{ github.env }}
+            Write-Host "Snyk department is Tandoor."
+          } elseif ('${{ inputs.DEPARTMENT }}' -like 'globeng' -or '${{ env.SNYK_DEPARTMENT }}' -like 'globeng') {
+            'SNYK_ORG_ID=cdd44eb2-a999-4300-9fc4-f30a70895a56' >> ${{ github.env }}
+            'SNYK_INTEGRATION_ID=0559596c-427d-4d35-b0cc-a83b064175e4' >> ${{ github.env }}
+            Write-Host "Snyk department is GlobEng."
+          } elseif ('${{ inputs.DEPARTMENT }}' -like 'tsgagile' -or '${{ env.SNYK_DEPARTMENT }}' -like 'tsgagile') {
+            'SNYK_ORG_ID=ca598728-ce5f-46b8-8979-9e5158b12ea6' >> ${{ github.env }}
+            'SNYK_INTEGRATION_ID=3993a0cc-23f9-443d-8054-202786749b4d' >> ${{ github.env }}
+            Write-Host "Snyk department is TSG Agile."
+          } elseif ('${{ inputs.DEPARTMENT }}' -like 'tsgsolutions' -or '${{ env.SNYK_DEPARTMENT }}' -like 'tsgsolutions') {
+            'SNYK_ORG_ID=6ba72d36-aa4c-4731-afd0-bb74f05234f8' >> ${{ github.env }}
+            'SNYK_INTEGRATION_ID=a28342c7-0799-4246-b761-f6498cb56dc8' >> ${{ github.env }}
+            Write-Host "Snyk department is TSG Solutions."
+          } elseif ('${{ inputs.DEPARTMENT }}' -like 'tsgsandbox' -or '${{ env.SNYK_DEPARTMENT }}' -like 'tsgsandbox') {
+            'SNYK_ORG_ID=24b69de1-3052-4450-86cb-fef7b454d78c' >> ${{ github.env }}
+            'SNYK_INTEGRATION_ID=025801b8-0bbe-4d4f-bbec-8658884212fe' >> ${{ github.env }}
+            Write-Host "Snyk department is TSG Sandbox."
+          } else {
+            Write-Warning "Unable to determine Snyk department."
+            [Environment]::Exit(1)
+          }
+        shell: pwsh
+      - name: Conduct Snyk analysis
+        uses: ./private-actions/snyk-csharp
+        with:
+          snyk_api_key: ${{ env.SNYK_TOKEN }}
+          snyk_org_id: ${{ env.SNYK_ORG_ID }}
+          snyk_integration_id: ${{ env.SNYK_INTEGRATION_ID }}
+          repository: ${{ github.repository }}
+          branch_name: ${{ inputs.REPOSITORY_BRANCH_TO_IMPORT_INTO_SNYK }}
+          path_to_dependency_file: ${{ inputs.PATH_TO_DEPENDENCY_FILE }}
+          snyk_github_integration_token: ${{ env.BAIN_ISSUES_TOKEN }}
+          create_github_issues: ${{ inputs.CREATE_GITHUB_ISSUE }}
+          github_issue_assignee: ${{ inputs.GITHUB_ISSUE_ASSIGNEE }}
+          integrate_with_snyk_platform: ${{ inputs.INTEGRATE_WITH_SNYK_PLATFORM }}
+          upload_sarif: ${{ inputs.UPLOAD_SARIF }}
+          security_issues_labels: ${{ inputs.SECURITY_ISSUES_LABELS }}
+          license_issues_labels: ${{ inputs.LICENSE_ISSUES_LABELS }}
+      - uses: actions/upload-artifact@v3
+        with:
+          name: snyk-sarif
+          path: snyk.sarif
+      - uses: actions/upload-artifact@v3
+        with:
+          name: snyk-json
+          path: snyk.json
+      - name: Upload SARIF file
+        if: ${{ inputs.UPLOAD_SARIF }} == 'true'
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: ${{ github.workspace }}/snyk.sarif
+      - name: Revoke public IP
+        if: always()
+        run: |
+          aws ec2 revoke-security-group-ingress --group-id "${{ env.VAULT_SG }}" --protocol tcp --port 443 --cidr "${{ steps.ip.outputs.ip }}/32"
